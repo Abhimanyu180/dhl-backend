@@ -107,6 +107,7 @@ exports.verifyOTP = async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
+    // console.log("user:",user);
     //verifying otp
     if (user.otp != otp) {
       return res.status(400).json({ message: "Invalid OTP" });
@@ -135,16 +136,20 @@ exports.verifyOTP = async (req, res) => {
     const token = jwt.sign(
       tokenPayload,
       process.env.JWT_SECRET,
-      {expiresIn: "24h"} 
+      // {
+      //   expiresIn: "24h"
+      // } 
     )
 
+    
     res.status(200).json({
       message: "OTP verified successfully",
       token, 
       user:{
         userId:user._id,
         phone:user.phone,
-      }
+      },
+      pendingGroupIds:user.pendingGroupIds,
     });
   } catch (error) {
     console.error("Error verifying OTP:", error.message);

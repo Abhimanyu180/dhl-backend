@@ -48,7 +48,7 @@ exports.createProfile = async (req, res) => {
 
       // Update the user's profile
       user.name = name;
-      user.photo = photoUrl; // Save Cloudinary URL in the user's profile
+      user.photo = photoUrl;             // Save Cloudinary URL in the user's profile
       user.isProfileSetupComplete = true;
 
       // Save the updated user
@@ -281,6 +281,13 @@ exports.sendGroupInvitation = async (req, res) => {
         invitationId,
       });
 
+      // Add groupId to the pendingGroupIds of the invited user
+      existingUser.pendingGroupIds = existingUser.pendingGroupIds || [];
+      if (!existingUser.pendingGroupIds.includes(newGroup._id)) {
+        existingUser.pendingGroupIds.push(newGroup._id);
+        await existingUser.save();
+      }
+
       // Collect phone numbers and their personalized messages for SMS
       phoneNumbers.push(phone);
       invitationMessages.push({
@@ -291,25 +298,25 @@ exports.sendGroupInvitation = async (req, res) => {
 
     await newGroup.save();
 
-    // Send SMS invitations for all members
-    for (const { phone, message } of invitationMessages) {
-      const smsData = {
-        message,
-        language: "english",
-        route: "q",
-        numbers: phone,
-      };
-      try {
-        console.log("Sending SMS to:", phone);
-        await axios.post("https://www.fast2sms.com/dev/bulkV2", smsData, {
-          headers: {
-            Authorization: apiKey,
-          },
-        });
-      } catch (error) {
-        console.error(`Error sending SMS to ${phone}:`, error.message);
-      }
-    }
+    //  Sending SMS invitations for all members
+    // for (const { phone, message } of invitationMessages) {
+    //   const smsData = {
+    //     message,
+    //     language: "english",
+    //     route: "q",
+    //     numbers: phone,
+    //   };
+    //   try {
+    //     console.log("Sending SMS to:", phone);
+    //     await axios.post("https://www.fast2sms.com/dev/bulkV2", smsData, {
+    //       headers: {
+    //         Authorization: apiKey,
+    //       },
+    //     });
+    //   } catch (error) {
+    //     console.error(`Error sending SMS to ${phone}:`, error.message);
+    //   }
+    // }
 
     return res.status(200).json({
       message: "Invitation sent successfully",
@@ -322,6 +329,7 @@ exports.sendGroupInvitation = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
 
 
 exports.acceptInvitation = async (req, res) => {
@@ -389,7 +397,7 @@ exports.acceptInvitation = async (req, res) => {
       //sending sms to the inviter when the group is accepted
       const iniviterSmsOptions = {
         authorization:process.env.FAST2SMS_API_KEY,
-        message: `Hi ${group.inviter.name}, your group "${group.groupName}" has been created successfully.`,
+        message: `Hi, ${group.inviter.name} your group "${group.groupName}" has been created successfully.`,
         numbers: [group.inviter.phone],
       }
       await fast2sms.sendMessage(iniviterSmsOptions);
@@ -411,7 +419,10 @@ exports.acceptInvitation = async (req, res) => {
      // Update the user's group array
      const user = await User.findByIdAndUpdate(
       user_id,
-      { $addToSet: { group: group_id } }, // Add group ID to user's group array
+      {
+        $addToSet: { group: group_id }, // Add group ID to user's group array
+        $pull: { pendingGroupIds: group_id }, // Remove the group ID from pendingGroupIds
+      },
       { new: true }
     );
     if (!user) {
@@ -464,26 +475,58 @@ exports.acceptInvitation = async (req, res) => {
 //   }
 // };
 
-exports.getGroups = async (req,res) =>{
+exports.getGroups = async (req, res) => {
   try {
     const user_id = req.user.userId;
-  
-    if(!user_id){
-      return res.status(400).json({message:"User ID is required."});
+
+    if (!user_id) {
+      return res.status(400).json({ message: "User ID is required." });
     }
-     // Find the user to get the group IDs
-     const user = await User.findById(user_id, "group");
-     if (!user) {
-       return res.status(404).json({ message: "User not found." });
-     }
-     const groupIds = user.group;
-     if (groupIds.length === 0) {
+
+    // Find the user to get the group IDs
+    const user = await User.findById(user_id, "group");
+    if (!user) {
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    const groupIds = user.group;
+    if (groupIds.length === 0) {
       return res.status(200).json({ message: "User is not a part of any groups.", groups: [] });
     }
 
-     // Find the group details using the group IDs
-     const groups = await Group.find({ _id: { $in: groupIds } });
-     return res.status(200).json({
+    // Use aggregation to filter groups and members
+    const groups = await Group.aggregate([
+      {
+        $match: {
+          _id: { $in: groupIds },
+          groupStatus: 1, // Only groups with groupStatus 1
+        },
+      },
+      {
+        $addFields: {
+          filteredMembers: {
+            $filter: {
+              input: "$members",
+              as: "member",
+              cond: { $eq: ["$$member.invitationStatus", 1] }, // Only members with invitationStatus 1
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          groupName: 1,
+          groupStatus: 1,
+          inviter: 1,
+          messages: 1,
+          members: "$filteredMembers", // Include only filtered members
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+    ]);
+
+    return res.status(200).json({
       message: "Groups fetched successfully.",
       groups,
     });
@@ -492,6 +535,7 @@ exports.getGroups = async (req,res) =>{
     return res.status(500).json({ message: "Internal Server Error." });
   }
 };
+
 
 exports.deleteGroupMembers = async (req, res) => {
   try {

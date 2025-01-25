@@ -68,6 +68,11 @@ const userSchema = new Schema({
             // required: true 
         }, 
       },
+      pendingGroupIds: [{
+        type: Schema.Types.ObjectId,
+        ref: 'Group',
+        default: null
+    }]
 },{timestamps:true})
 
 const groupSchema = new Schema({
@@ -82,7 +87,7 @@ const groupSchema = new Schema({
             ref: "User",
           },
           member_role:{
-            type:Number,            //1 for admin, 2 for member
+            type:Number,            //1 for admin, 2 for relative and 3 for friend
             default:null
           },
           invitationStatus: {
