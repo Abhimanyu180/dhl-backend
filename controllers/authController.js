@@ -140,6 +140,7 @@ exports.verifyOTP = async (req, res) => {
       //   expiresIn: "24h"
       // } 
     )
+    console.log(jwt.decode(token));
 
     
     res.status(200).json({

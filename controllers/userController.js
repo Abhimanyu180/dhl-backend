@@ -494,7 +494,7 @@ exports.getGroups = async (req, res) => {
       return res.status(200).json({ message: "User is not a part of any groups.", groups: [] });
     }
 
-    // Use aggregation to filter groups and members
+    // Use aggregation to fetch groups, members, and inviter details
     const groups = await Group.aggregate([
       {
         $match: {
@@ -514,12 +514,66 @@ exports.getGroups = async (req, res) => {
         },
       },
       {
+        $lookup: {
+          from: "users",
+          localField: "filteredMembers.user",
+          foreignField: "_id",
+          as: "membersDetails",
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "inviter.inviter_id",
+          foreignField: "_id",
+          as: "inviterDetails",
+        },
+      },
+      {
+        $addFields: {
+          members: {
+            $map: {
+              input: "$filteredMembers",
+              as: "member",
+              in: {
+                _id: "$$member.user",
+                member_role: "$$member.member_role",
+                invitationStatus: "$$member.invitationStatus",
+                photo: {
+                  $arrayElemAt: [
+                    {
+                      $filter: {
+                        input: "$membersDetails",
+                        as: "memberDetail",
+                        cond: { $eq: ["$$memberDetail._id", "$$member.user"] },
+                      },
+                    },
+                    0,
+                  ],
+                },
+              },
+            },
+          },
+          inviter: {
+            $arrayElemAt: ["$inviterDetails", 0],
+          },
+        },
+      },
+      {
         $project: {
           groupName: 1,
           groupStatus: 1,
-          inviter: 1,
           messages: 1,
-          members: "$filteredMembers", // Include only filtered members
+          members: {
+            user: 1,
+            member_role: 1,
+            invitationStatus: 1,
+            "photo.photo": 1,
+          },
+          inviter: {
+            name: "$inviter.name",
+            photo: "$inviter.photo",
+          },
           createdAt: 1,
           updatedAt: 1,
         },
@@ -535,7 +589,6 @@ exports.getGroups = async (req, res) => {
     return res.status(500).json({ message: "Internal Server Error." });
   }
 };
-
 
 exports.deleteGroupMembers = async (req, res) => {
   try {

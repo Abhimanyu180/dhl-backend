@@ -113,6 +113,7 @@ const groupSchema = new Schema({
         },
         name: String,
         phone: String,
+        photo: String,
     },
     messages: [
         {

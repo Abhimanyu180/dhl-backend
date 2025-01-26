@@ -32,7 +32,7 @@ exports.isRegistered = async(req,res,next) =>{
       }
 
       if (user.isProfileSetupComplete === true) {
-        return res.status(400).json({ message: "Profile already created" });
+        return res.status(200).json({ message: "Profile already created" });
       }
       next();
     } catch (error) {
