@@ -1,79 +1,93 @@
 const mongoose = require("mongoose");
 const Schema = mongoose.Schema;
 
-const userSchema = new Schema({
-    name:{
-        type:String,
-        default:null
-    },
-    photo:{
-        type:String,
-        default:null
-    },
-    role:{
-        type:Number,              //1 for admin, 2 for member
-        default:0
-    },
-    phone:{
-        type:String,
-        required:true,
-        unique:true
-    },
-    otp:{
-        type:Number,
-    },
-    otpExpiryTime:{
-        type:Date
-    },
-    freeTrialStartDate:{
-        type:Date,
-        default:null,
-    },
-    freeTrialEndDate:{
-        type:Date,
-        default:null,
-    },
-    group : [{
-        type: Schema.Types.ObjectId,
-        ref: 'Group',
-        default:null
-    }],
-    subscriptionPlan:{
-        type:Schema.Types.ObjectId,
-        ref:"SubscriptionPlan",
-        default:null
-    },
-    subscription:{
-        id:String,
-        status:String
-    },
-    is_subscribed:{
-        type:Boolean,
-        default:false
-    },
-    isProfileSetupComplete:{
-        type:Boolean,
-        default:false
-    },
-    location: {
-        type: {
-          type: String, 
-          enum: ["Point"], 
-          default: "Point", 
-        //   required: true,
-        },
-        coordinates: { 
-            type: [Number],   //[longitude,latitude]
-            default:[0,0],  
-            // required: true 
-        }, 
+const userSchema = new Schema(
+    {
+      name: {
+        type: String,
+        default: null,
       },
-      pendingGroupIds: [{
+      photo: {
+        type: String,
+        default: null,
+      },
+      role: {
+        type: Number, // 1 for admin, 2 for member
+        default: null,
+      },
+      phone: {
+        type: String,
+        required: true,
+        unique: true,
+      },
+      otp: {
+        type: Number,
+      },
+      otpExpiryTime: {
+        type: Date,
+      },
+      freeTrialStartDate: {
+        type: Date,
+        default: null,
+      },
+      freeTrialEndDate: {
+        type: Date,
+        default: null,
+      },
+      group: [
+        {
+          type: Schema.Types.ObjectId,
+          ref: 'Group',
+          default: null,
+        },
+      ],
+      subscriptionPlan: {
         type: Schema.Types.ObjectId,
-        ref: 'Group',
-        default: null
-    }]
-},{timestamps:true})
+        ref: 'SubscriptionPlan',
+        default: null,
+      },
+      subscription: {
+        id: String,
+        status: String,
+      },
+      is_subscribed: {
+        type: Boolean,
+        default: false,
+      },
+      isProfileSetupComplete: {
+        type: Boolean,
+        default: false,
+      },
+      location: {
+        type: {
+          type: String,
+          enum: ['Point'], // GeoJSON type for location
+          default: 'Point',
+        },
+        coordinates: {
+          type: [Number], // [longitude, latitude]
+          default: [0, 0],
+        },
+      },
+      pendingGroupIds: [
+        {
+          groupId: {
+            type: Schema.Types.ObjectId,
+            ref: 'Group',
+          },
+          invitationTime: {
+            type: Date,
+            default: null,
+          },
+          expiryTime:{
+            type:Date,
+            default:null
+          }
+        },
+      ],
+    },
+    { timestamps: true }
+);
 
 const groupSchema = new Schema({
     groupName:{

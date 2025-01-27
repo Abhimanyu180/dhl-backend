@@ -2,7 +2,6 @@ const { User,Group } = require("../models/userModel");
 const upload = require("../middleware/multer");
 const fs = require("fs");
 const { uploadOnCloudinary } = require("../services/cloudinary");
-// const NotificationService = require("../services/notification");
 const fast2sms = require('fast-two-sms');
 const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
@@ -206,6 +205,7 @@ exports.createProfile = async (req, res) => {
 exports.sendGroupInvitation = async (req, res) => {
   try {
     const user_id = req.user.userId;
+    console.log("userId:", user_id);
     const { group_name, members, member_role } = req.body;
 
     const apiKey = process.env.FAST2SMS_API_KEY;
@@ -224,6 +224,7 @@ exports.sendGroupInvitation = async (req, res) => {
 
     // Get the inviter's details
     const user = await User.findById(user_id);
+    console.log("user:", user);
     if (!user) {
       return res.status(404).json({ message: "Inviter not found." });
     }
@@ -251,9 +252,9 @@ exports.sendGroupInvitation = async (req, res) => {
     user.role = 1;
     await user.save();
 
-    // Add members to the group and generate individual invitation links
-    const phoneNumbers = [];
-    const invitationMessages = [];
+    const currentTime = new Date(); // Current timestamp for invitationTime
+    const expiryTime = new Date(currentTime.getTime() + 24 * 60 * 60 * 1000); // 24 hours later
+
     for (const member of members) {
       const { name, phone, role } = member;
 
@@ -281,42 +282,41 @@ exports.sendGroupInvitation = async (req, res) => {
         invitationId,
       });
 
-      // Add groupId to the pendingGroupIds of the invited user
-      existingUser.pendingGroupIds = existingUser.pendingGroupIds || [];
-      if (!existingUser.pendingGroupIds.includes(newGroup._id)) {
-        existingUser.pendingGroupIds.push(newGroup._id);
-        await existingUser.save();
+      // Send SMS to the invited member
+      const smsData = {
+        message: `Hi ${name}, you have been invited to join the group "${group_name}" by ${inviter_name}. Accept your invitation here: ${acceptLink}`,
+        language: "english",
+        route: "q",
+        numbers: phone,
+      };
+
+      try {
+        await axios.post("https://www.fast2sms.com/dev/bulkV2", smsData, {
+          headers: { Authorization: apiKey },
+        });
+        console.log("SMS sent successfully.");
+      } catch (error) {
+        console.error("Error sending SMS:", error.message);
       }
 
-      // Collect phone numbers and their personalized messages for SMS
-      phoneNumbers.push(phone);
-      invitationMessages.push({
-        phone,
-        message: `You have been invited to join the group "${group_name}". Accept your invitation here: ${acceptLink}`,
-      });
+      // Update invitationTime, expiryTime, and pendingGroupIds
+      existingUser.pendingGroupIds = existingUser.pendingGroupIds || [];
+      const pendingGroupData = {
+        groupId: newGroup._id,
+        invitationTime: currentTime,
+        expiryTime,
+      };
+      if (
+        !existingUser.pendingGroupIds.some(
+          (pending) => pending.groupId.toString() === newGroup._id.toString()
+        )
+      ) {
+        existingUser.pendingGroupIds.push(pendingGroupData);
+      }
+      await existingUser.save();
     }
 
     await newGroup.save();
-
-    //  Sending SMS invitations for all members
-    // for (const { phone, message } of invitationMessages) {
-    //   const smsData = {
-    //     message,
-    //     language: "english",
-    //     route: "q",
-    //     numbers: phone,
-    //   };
-    //   try {
-    //     console.log("Sending SMS to:", phone);
-    //     await axios.post("https://www.fast2sms.com/dev/bulkV2", smsData, {
-    //       headers: {
-    //         Authorization: apiKey,
-    //       },
-    //     });
-    //   } catch (error) {
-    //     console.error(`Error sending SMS to ${phone}:`, error.message);
-    //   }
-    // }
 
     return res.status(200).json({
       message: "Invitation sent successfully",
@@ -331,22 +331,45 @@ exports.sendGroupInvitation = async (req, res) => {
 };
 
 
-
 exports.acceptInvitation = async (req, res) => {
   const apiKey = process.env.FAST2SMS_API_KEY;
+
   try {
     const user_id = req.user.userId;
+    const invitedUser = await User.findById(user_id);
     const { group_id } = req.body;
+
     if (!group_id || !user_id) {
       return res
         .status(400)
         .json({ message: "Group ID and User ID are required." });
     }
-    //finding the group in the database
+
+    // Check if the invitation exists in the user's pendingGroupIds
+    const pendingGroup = invitedUser.pendingGroupIds.find(
+      (pg) => pg.groupId.toString() === group_id
+    );
+
+    if (!pendingGroup) {
+      return res
+        .status(202)
+        .json({ message: "No pending invitation found for this group." });
+    }
+
+    // Check if the invitation has expired
+    const currentTime = new Date();
+    if (pendingGroup.expiryTime && pendingGroup.expiryTime < currentTime) {
+      return res.status(202).json({
+        message: "The invitation has expired. Ask the inviter to invite again.",
+      });
+    }
+
+    // Find the group in the database
     const group = await Group.findById(group_id).populate("members.user");
     if (!group) {
-      return res.status(404).json({ message: "Group not Found" });
+      return res.status(404).json({ message: "Group not found." });
     }
+
     // Find the member and update invitation status
     const member = group.members.find((m) => m.user._id.toString() === user_id);
     if (!member) {
@@ -360,51 +383,49 @@ exports.acceptInvitation = async (req, res) => {
         message: "The invitation has already been accepted by this member.",
       });
     }
+
     // Update the invitation status to Accepted (1)
     member.invitationStatus = 1;
 
-    //sending sms to the inviter when the member accepts the invitation
-    const memberSmsOptions = {
-      authorization:process.env.FAST2SMS_API_KEY,
-      message: `Hi ${member.user.name}, has accepted your invitation to join the group "${group.groupName}".`,
-      numbers: [group.inviter.phone],
-    }
-
-    const message =  `Hi ${member.user.name}, has accepted your invitation to join the group "${group.groupName}".`
-
+    // Send SMS to the inviter when the member accepts the invitation
     const smsData = {
-      message : message,
-      language : "english",
-      route : "q",
-      numbers : group.inviter.phone
+      message: `Hi ${member.user.name}, has accepted your invitation to join the group "${group.groupName}".`,
+      language: "english",
+      route: "q",
+      numbers: group.inviter.phone,
+    };
+
+    try {
+      await axios.post("https://www.fast2sms.com/dev/bulkV2", smsData, {
+        headers: { Authorization: apiKey },
+      });
+      console.log("SMS sent successfully.");
+    } catch (error) {
+      console.error("Error sending SMS:", error.message);
     }
-    console.log("SMS DATA:-",smsData);
 
-    axios.post("https://www.fast2sms.com/dev/bulkV2",smsData,{
-      headers:{
-        Authorization:apiKey
-      }
-    }).then((response)=>{
-      console.log("sent successfully");
-    }).catch((error)=>{
-      console.log("error");
-    })
-
-
-    if(group.groupStatus === 0){
+    // If the group is inactive, activate it and notify the inviter
+    if (group.groupStatus === 0) {
       group.groupStatus = 1;
 
-      //sending sms to the inviter when the group is accepted
-      const iniviterSmsOptions = {
-        authorization:process.env.FAST2SMS_API_KEY,
-        message: `Hi, ${group.inviter.name} your group "${group.groupName}" has been created successfully.`,
-        numbers: [group.inviter.phone],
-      }
-      await fast2sms.sendMessage(iniviterSmsOptions);
-    }
-    
-    const inviter_id = group.inviter.inviter_id;
+      const inviterSmsData = {
+        message: `Hi ${group.inviter.name}, your group "${group.groupName}" has been created successfully.`,
+        language: "english",
+        route: "q",
+        numbers: group.inviter.phone,
+      };
 
+      try {
+        await axios.post("https://www.fast2sms.com/dev/bulkV2", inviterSmsData, {
+          headers: { Authorization: apiKey },
+        });
+        console.log("SMS to inviter sent successfully.");
+      } catch (error) {
+        console.error("Error sending SMS to inviter:", error.message);
+      }
+    }
+
+    const inviter_id = group.inviter.inviter_id;
     const invitingUser = await User.findById(inviter_id);
 
     // Add the group ID to the inviter's group field if not already present
@@ -413,28 +434,28 @@ exports.acceptInvitation = async (req, res) => {
       await invitingUser.save(); // Save the updated user document
     }
 
+    // Save the updated group
     await group.save();
 
-
-     // Update the user's group array
-     const user = await User.findByIdAndUpdate(
+    // Update the user's group array and remove the pending group ID
+    const user = await User.findByIdAndUpdate(
       user_id,
       {
         $addToSet: { group: group_id }, // Add group ID to user's group array
-        $pull: { pendingGroupIds: group_id }, // Remove the group ID from pendingGroupIds
+        $pull: { pendingGroupIds: { groupId: group_id } }, // Remove the group ID from pendingGroupIds
       },
       { new: true }
     );
+
     if (!user) {
       return res.status(404).json({ message: "User not found." });
     }
-    return res
-      .status(200)
-      .json({ 
-        message: "Invitation accepted and group created successfully." ,
-        group: group_id,
-        user: user,
-      });
+
+    return res.status(200).json({
+      message: "Invitation accepted and group created successfully.",
+      group: group_id,
+      user: user,
+    });
   } catch (error) {
     console.error("Error accepting invitation:", error.message);
     return res.status(500).json({ message: "Internal Server Error." });
@@ -491,7 +512,9 @@ exports.getGroups = async (req, res) => {
 
     const groupIds = user.group;
     if (groupIds.length === 0) {
-      return res.status(200).json({ message: "User is not a part of any groups.", groups: [] });
+      return res
+        .status(200)
+        .json({ message: "User is not a part of any groups.", groups: [] });
     }
 
     // Use aggregation to fetch groups, members, and inviter details
@@ -539,16 +562,18 @@ exports.getGroups = async (req, res) => {
                 _id: "$$member.user",
                 member_role: "$$member.member_role",
                 invitationStatus: "$$member.invitationStatus",
-                photo: {
-                  $arrayElemAt: [
+                user: {
+                  $ifNull: [
                     {
-                      $filter: {
-                        input: "$membersDetails",
-                        as: "memberDetail",
-                        cond: { $eq: ["$$memberDetail._id", "$$member.user"] },
+                      $first: {
+                        $filter: {
+                          input: "$membersDetails",
+                          as: "memberDetail",
+                          cond: { $eq: ["$$memberDetail._id", "$$member.user"] },
+                        },
                       },
                     },
-                    0,
+                    null,
                   ],
                 },
               },
@@ -568,10 +593,13 @@ exports.getGroups = async (req, res) => {
             user: 1,
             member_role: 1,
             invitationStatus: 1,
-            "photo.photo": 1,
+            name: 1,
+            phone: 1,
+            photo: 1,
           },
           inviter: {
             name: "$inviter.name",
+            phone: "$inviter.phone",
             photo: "$inviter.photo",
           },
           createdAt: 1,
@@ -579,6 +607,7 @@ exports.getGroups = async (req, res) => {
         },
       },
     ]);
+    
 
     return res.status(200).json({
       message: "Groups fetched successfully.",
@@ -589,6 +618,44 @@ exports.getGroups = async (req, res) => {
     return res.status(500).json({ message: "Internal Server Error." });
   }
 };
+
+exports.getPendingGroups = async (req, res) => {
+  const user_id = req.user.userId;
+  try {
+    // Fetch the user details
+    const user = await User.findById(user_id);
+    console.log("user:", user);
+
+    const pendingGroupIds = user.pendingGroupIds;
+    console.log("Pending Group Ids:", pendingGroupIds.length);
+
+    if (!pendingGroupIds || pendingGroupIds.length === 0) {
+      return res.status(200).json({ message: "No pending groups found" });
+    }
+
+    // Fetch group details for each pending groupId
+    const structuredGroups = await Promise.all(
+      pendingGroupIds.map(async (item) => {
+        const group = await Group.findById(item.groupId); // Fetch group details
+        return {
+          groupId: item.groupId,
+          groupName: group?.groupName || "Unknown Group",
+          invitationTime: item.invitationTime,
+          expiryTime: item.expiryTime,
+        };
+      })
+    );
+
+    return res.status(200).json({
+      message: "Successfully fetched the pending group details",
+      pendingGroups: structuredGroups,
+    });
+  } catch (error) {
+    console.log("Failed to get the pending group details:", error.message);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
 
 exports.deleteGroupMembers = async (req, res) => {
   try {
@@ -772,8 +839,9 @@ exports.addMemberToGroup = async(req,res) =>{
 
 exports.updateMemberLocation = async(req,res) =>{
   try {
-    const {user_id,latitude,longitude} = req.body;
-    if (!user_id || latitude === undefined || longitude === undefined) {
+    const user_id = req.user.userId;
+    const {latitude,longitude} = req.body;
+    if ( !latitude || !longitude) {
       return res.status(400).json({ message: "All fields are required." });
     }
     const user = await User.findByIdAndUpdate(user_id);
@@ -791,15 +859,31 @@ exports.updateMemberLocation = async(req,res) =>{
 
 exports.getMemeberLocation = async(req,res) =>{
   try {
-    const { user_id } = req.body;
-    if (!user_id) {
-      return res.status(400).json({ message: "User ID is required." });
+    const user_id = req.user.userId;
+    const {memberUserId,group_id} = req.body;
+    if(!memberUserId || !group_id){
+      return res.status(400).json({message:"Group ID and member Id is required."});
     }
-    const user = await User.findById(user_id);
-    if (!user || !user.location.coordinates) {
-      return res.status(404).json({ message: "Location not found for the user." });
+   // Check if the group exists
+   const group = await Group.findById(group_id);
+   if (!group) {
+     return res.status(404).json({ message: "Group not found." });
+   }
+  const isAdmin = group.members.some(
+    (member)=>member.user.toString() === user_id && member.member_role === 1
+  );
+
+  if (!isAdmin) {
+    return res.status(202).json({ message: "Only group admins can see the location of the group members." });
+  }
+    const memberUser = await User.findById(memberUserId);
+    // if (!memberUser || !memberUser.location || !memberUser.location.coordinates) {
+    //   return res.status(202).json({ message: "Member has not set his location." });
+    // }
+    const [longitude, latitude] = memberUser.location.coordinates;
+    if (longitude === 0 && latitude === 0) {
+      return res.status(202).json({ message: "Member has not set their location in the database." });
     }
-    const [longitude, latitude] = user.location.coordinates;
     return res.status(200).json({
       message: "Location retrieved successfully.",
       location: { latitude, longitude },
