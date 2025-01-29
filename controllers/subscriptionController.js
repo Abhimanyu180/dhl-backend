@@ -47,21 +47,6 @@ exports.getAllPlans = async(req,res) =>{
     }
 }
 
-// exports.planDetails = async(req,res) =>{
-//     try {
-//         const { plan_id } = req.body;
-
-//         if(!plan_id){
-//             return res.status(400).json({message:'plan Id is required'});
-//         }
-
-//         await SubscriptionPlan.findOne({
-//             _id
-//         })
-//     } catch (error) {
-        
-//     }
-// }
 
 //creating subscription plan for user
 exports.createSubscription = async (req, res) => {

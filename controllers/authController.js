@@ -88,7 +88,7 @@ exports.sendOTP = async (req, res) => {
     console.error("Error sending OTP:", error);
     res.status(500).json({ 
       success: false, 
-     message:`failed ${error.message}`
+     message:`failed ${error}`
     });
   }
 };
@@ -151,6 +151,9 @@ exports.verifyOTP = async (req, res) => {
         phone:user.phone,
       },
       pendingGroupIds:user.pendingGroupIds,
+      isProfileSetup:user.isProfileSetupComplete,      
+      is_subscribed:user.is_subscribed,
+      subscriptionPlan:user.subscriptionPlan
     });
   } catch (error) {
     console.error("Error verifying OTP:", error.message);
